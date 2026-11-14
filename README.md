@@ -15,7 +15,7 @@ Projet du tableau de bord : `gksiatlrpionalhpqxkc`
 
 Dans **Project Settings → Edge Functions → Secrets**, ajoute :
 - `ATDJ_SOURCE_URL` = `https://caqghciujoyncsudltgr.supabase.co`
-- `ATDJ_SOURCE_SERVICE_ROLE_KEY` = la clé secrète du projet Supabase principal À Thouars de Jouer.
+- `ATDJ_SOURCE_SECRET_KEY` = la clé secrète du projet Supabase principal À Thouars de Jouer.
 
 Ne partage jamais cette clé dans un chat, un dépôt GitHub ou le fichier `config.js`.
 
