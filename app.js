@@ -1,139 +1,47 @@
 (() => {
-  "use strict";
-  const cfg = window.ATDJ_CONFIG || {};
-  const $ = (id) => document.getElementById(id);
-  const loginView = $("loginView");
-  const dashboardView = $("dashboardView");
-  let client = null;
-
-  function setMessage(id, message, kind = "") {
-    const el = $(id);
-    el.textContent = message || "";
-    el.className = "message" + (kind ? " " + kind : "");
-  }
-
-  function showLogin() {
-    loginView.classList.remove("hidden");
-    dashboardView.classList.add("hidden");
-  }
-
-  function showDashboard(user, profile) {
-    loginView.classList.add("hidden");
-    dashboardView.classList.remove("hidden");
-    $("userEmail").textContent = user.email || "";
-    $("accessEmail").textContent = user.email || "";
-    $("accessName").textContent = profile?.display_name || "Compte autorisé";
-  }
-
-  async function checkAllowlist(user) {
-    const { data, error } = await client
-      .from("dashboard_allowed_users")
-      .select("email,display_name,is_active")
-      .eq("email", String(user.email || "").trim().toLowerCase())
-      .eq("is_active", true)
-      .maybeSingle();
-    if (error) throw new Error("Impossible de vérifier les autorisations. Réessaie plus tard.");
-    return data;
-  }
-
-  async function loadStats() {
-    $("sourceStatus").textContent = "Connexion…";
-    $("sourceStatus").className = "status-pill";
-    $("sourceDescription").textContent = "Récupération sécurisée des indicateurs du site principal…";
-    const { data, error } = await client.functions.invoke("dashboard-stats", { body: {} });
-    if (error) {
-      let detail = "Le connecteur n’a pas répondu correctement.";
-      try {
-        const response = error.context;
-        if (response && typeof response.json === "function") {
-          const payload = await response.json();
-          if (payload?.message) detail = payload.message;
-        } else if (error.message) {
-          detail = error.message;
-        }
-      } catch (_) {
-        if (error.message) detail = error.message;
-      }
-      $("sourceStatus").textContent = "Erreur de connexion";
-      $("sourceStatus").className = "status-pill";
-      $("sourceDescription").textContent = detail;
-      setMessage("dashboardMessage", "Les accès au tableau de bord sont validés, mais les statistiques ne sont pas encore disponibles.");
-      return;
-    }
-    if (!data?.ok) {
-      $("sourceStatus").textContent = "Indisponible";
-      $("sourceDescription").textContent = data?.message || "Le connecteur n’a pas renvoyé de statistiques.";
-      return;
-    }
-    $("membersCount").textContent = Number(data.members ?? 0).toLocaleString("fr-FR");
-    $("sessionsCount").textContent = Number(data.sessions ?? 0).toLocaleString("fr-FR");
-    $("registrationsCount").textContent = Number(data.registrations ?? 0).toLocaleString("fr-FR");
-    $("sourceStatus").textContent = "Connecté";
-    $("sourceStatus").className = "status-pill ready";
-    $("sourceDescription").textContent = "Les indicateurs ont été récupérés depuis la base de données du site principal.";
-    $("lastUpdated").textContent = "Mis à jour à " + new Date().toLocaleTimeString("fr-FR", {hour:"2-digit",minute:"2-digit"});
-    setMessage("dashboardMessage", "Statistiques actualisées.", "success");
-  }
-
-  async function enterApp(user) {
-    const access = await checkAllowlist(user);
-    if (!access) {
-      await client.auth.signOut();
-      throw new Error("Cette adresse e-mail ne figure pas dans la liste des personnes autorisées.");
-    }
-    showDashboard(user, access);
-    await loadStats();
-  }
-
-  async function init() {
-    if (!cfg.supabaseUrl || !cfg.publishableKey || !window.supabase?.createClient) {
-      setMessage("loginMessage", "La configuration Supabase de config.js est incomplète.");
-      return;
-    }
-    client = window.supabase.createClient(cfg.supabaseUrl, cfg.publishableKey, {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
-    });
-
-    $("togglePassword").addEventListener("click", () => {
-      const input = $("password");
-      const visible = input.type === "password";
-      input.type = visible ? "text" : "password";
-      $("togglePassword").textContent = visible ? "Masquer" : "Voir";
-      $("togglePassword").setAttribute("aria-label", visible ? "Masquer le mot de passe" : "Afficher le mot de passe");
-    });
-
-    $("loginForm").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const button = $("loginButton");
-      button.disabled = true;
-      button.textContent = "Connexion…";
-      setMessage("loginMessage", "");
-      const email = $("email").value.trim().toLowerCase();
-      const password = $("password").value;
-      try {
-        const { data, error } = await client.auth.signInWithPassword({ email, password });
-        if (error) throw new Error("Adresse e-mail ou mot de passe incorrect.");
-        await enterApp(data.user);
-      } catch (err) {
-        setMessage("loginMessage", err.message || "Connexion impossible.");
-      } finally {
-        button.disabled = false;
-        button.innerHTML = "Accéder au tableau de bord <span>→</span>";
-      }
-    });
-
-    $("logoutButton").addEventListener("click", async () => {
-      await client.auth.signOut();
-      showLogin();
-      setMessage("loginMessage", "Tu es déconnecté.", "success");
-    });
-
-    const { data } = await client.auth.getSession();
-    if (data.session?.user) {
-      try { await enterApp(data.session.user); }
-      catch { await client.auth.signOut(); showLogin(); }
-    }
-  }
-
-  document.addEventListener("DOMContentLoaded", init);
+"use strict";
+const cfg=window.ATDJ_CONFIG||{},$=id=>document.getElementById(id);
+let client=null,dataSet={members:[],sessions:[],registrations:[],activity:[],weekly:[],generated_at:null},seen=false;
+function msg(id,text,kind=""){const e=$(id);if(e){e.textContent=text||"";e.className="message"+(kind?" "+kind:"");}}
+function status(id,text,kind="pending"){const e=$(id);if(e){e.textContent=text;e.className="status-pill "+kind;}}
+function showLogin(){$("loginView").classList.remove("hidden");$("dashboardView").classList.add("hidden");}
+function showDashboard(user){$("loginView").classList.add("hidden");$("dashboardView").classList.remove("hidden");$("userEmail").textContent=user.email||"";}
+async function allow(user){const {data,error}=await client.from("dashboard_allowed_users").select("email,is_active").eq("email",String(user.email||"").trim().toLowerCase()).eq("is_active",true).maybeSingle();if(error)throw Error("Impossible de vérifier les autorisations.");if(!data)throw Error("Cette adresse e-mail ne figure pas dans la liste des personnes autorisées.");}
+function tab(name){document.querySelectorAll(".nav-tab").forEach(b=>b.classList.toggle("active",b.dataset.tab===name));document.querySelectorAll(".tab-panel").forEach(p=>p.classList.toggle("hidden",p.id!=="tab-"+name));}
+function safe(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function date(v,full=true){if(!v)return"Date inconnue";const d=new Date(v);return Number.isNaN(d.getTime())?"Date inconnue":d.toLocaleString("fr-FR",full?{dateStyle:"short",timeStyle:"short"}:{dateStyle:"medium"});}
+function render(){
+$("membersCount").textContent=dataSet.members.length.toLocaleString("fr-FR");$("sessionsCount").textContent=dataSet.sessions.length.toLocaleString("fr-FR");$("registrationsCount").textContent=dataSet.registrations.length.toLocaleString("fr-FR");
+$("memberNavCount").textContent=dataSet.members.length;$("memberCountLabel").textContent=dataSet.members.length+" membre(s)";$("activityCountLabel").textContent=dataSet.activity.length+" événement(s)";
+const max=Math.max(1,...dataSet.weekly.map(x=>x.count));$("weeklyChart").innerHTML=dataSet.weekly.map(x=>'<div class="chart-day"><div class="chart-bar-track"><div class="chart-bar" style="height:'+Math.max(3,Math.round(x.count/max*100))+'%"></div></div><small>'+safe(x.label)+'</small></div>').join("")||'<p class="muted">Aucune donnée récente.</p>';
+renderMembers();const rows=dataSet.activity.map(activityHTML).join("")||'<p class="muted">Aucun événement détecté.</p>';$("activityList").innerHTML=rows;$("recentActivity").innerHTML=dataSet.activity.slice(0,5).map(activityHTML).join("")||'<p class="muted">Aucun événement récent.</p>';
+const alerts=dataSet.activity.slice(0,12);$("notificationCount").textContent=seen?0:alerts.length;$("notificationsList").innerHTML=alerts.map(x=>'<div class="notification-item '+(seen?"seen":"")+'"><span class="notification-symbol">•</span><div><strong>'+safe(x.title)+'</strong><p>'+safe(x.description)+'</p><small>'+date(x.created_at)+'</small></div></div>').join("")||'<p class="muted">Aucune notification.</p>';
+const ready=!!dataSet.generated_at;status("overallStatus",ready?"Opérationnel":"À vérifier",ready?"ready":"pending");$("overviewHealth").innerHTML='<div class="health-row"><span>Authentification ATDJ Control</span><span>Active</span></div><div class="health-row"><span>Base de données principale</span><span>'+(ready?"Connectée":"Indisponible")+'</span></div><div class="health-row"><span>Synchronisation</span><span>'+(ready?"À jour":"En attente")+'</span></div>';
+status("dashboardHealth","Authentifié","ready");status("sourceHealth",ready?"Connectée":"Indisponible",ready?"ready":"error");status("dataHealth",ready?"À jour":"En attente",ready?"ready":"pending");$("healthTimestamp").textContent=ready?date(dataSet.generated_at):"Pas encore vérifié";$("healthDetails").textContent=ready?"Lecture réussie : "+dataSet.members.length+" profils, "+dataSet.sessions.length+" sessions et "+dataSet.registrations.length+" inscriptions.":"La base principale n’a pas encore répondu.";
+}
+function activityHTML(x){const cls=x.type==="Session"?"session":x.type==="Inscription"?"registration":"";return'<div class="activity-item"><span class="activity-dot '+cls+'"></span><div class="activity-copy"><strong>'+safe(x.title)+'</strong><p>'+safe(x.description||"")+'</p></div><time class="activity-time">'+date(x.created_at)+'</time></div>';}
+function renderMembers(){const q=($("memberSearch")?.value||"").toLowerCase().trim(),r=$("roleFilter")?.value||"all";const list=dataSet.members.filter(m=>(r==="all"||m.role===r)&&[m.first_name,m.last_name,m.username,m.email].some(v=>String(v||"").toLowerCase().includes(q)));$("membersTable").innerHTML=list.map(m=>{const name=[m.first_name,m.last_name].filter(Boolean).join(" ")||m.username||"Membre",role={member:"Membre",admin:"Administrateur",super_admin:"Super-administrateur"}[m.role]||"Membre";return'<tr><td><span class="member-name">'+safe(name)+'</span>'+(m.username?'<span class="member-sub">@'+safe(m.username)+'</span>':"")+'</td><td>'+safe(m.email||"Non disponible")+'</td><td><span class="role-tag '+safe(m.role)+'">'+role+'</span></td><td>'+date(m.created_at,false)+'</td></tr>';}).join("")||'<tr><td colspan="4" class="empty-cell">Aucun membre correspondant.</td></tr>';}
+async function load(){
+$("refreshButton").disabled=true;msg("dashboardMessage","Actualisation des données…");
+try{const {data,error}=await client.functions.invoke("dashboard-stats",{body:{action:"dashboard"}});if(error)throw Error("Connecteur indisponible. Vérifie les secrets du projet Supabase.");if(!data?.ok)throw Error(data?.message||"Impossible de charger les données.");
+dataSet={members:data.members||[],sessions:data.sessions||[],registrations:data.registrations||[],activity:data.activity||[],weekly:data.weekly||[],generated_at:data.generated_at||new Date().toISOString()};
+$("lastUpdated").textContent="Mis à jour à "+new Date(dataSet.generated_at).toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"});render();msg("dashboardMessage","Données actualisées.","success");$("exportMessage")&&($("exportMessage").textContent="Dernière actualisation : "+date(dataSet.generated_at));
+}catch(e){msg("dashboardMessage",e.message||"Erreur de chargement.");status("overallStatus","Indisponible","error");status("sourceHealth","Indisponible","error");status("dataHealth","Non synchronisé","error");$("healthDetails").textContent=e.message||"Erreur de connexion.";}
+finally{$("refreshButton").disabled=false;}
+}
+function csv(name,headers,rows){const body="\uFEFF"+[headers,...rows].map(r=>r.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(";")).join("\r\n");const url=URL.createObjectURL(new Blob([body],{type:"text/csv;charset=utf-8"})),a=document.createElement("a");a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);$("exportMessage")&&($("exportMessage").textContent="Export créé : "+name);}
+function exportData(type){if(type==="members"||type==="all")csv("atdj-membres.csv",["Prénom","Nom","Pseudo","E-mail","Rôle","Inscription"],dataSet.members.map(m=>[m.first_name,m.last_name,m.username,m.email,m.role,m.created_at]));if(type==="activity"||type==="all")csv("atdj-activite.csv",["Type","Événement","Détail","Date"],dataSet.activity.map(x=>[x.type,x.title,x.description,x.created_at]));if(type==="all")csv("atdj-indicateurs.csv",["Indicateur","Valeur"],[["Membres",dataSet.members.length],["Sessions",dataSet.sessions.length],["Inscriptions",dataSet.registrations.length]]);}
+async function enter(user){await allow(user);showDashboard(user);await load();}
+async function init(){
+if(!cfg.supabaseUrl||!cfg.publishableKey||!window.supabase?.createClient){msg("loginMessage","La configuration Supabase de config.js est incomplète.");return;}
+client=window.supabase.createClient(cfg.supabaseUrl,cfg.publishableKey,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
+$("togglePassword").addEventListener("click",()=>{const i=$("password"),v=i.type==="password";i.type=v?"text":"password";$("togglePassword").textContent=v?"Masquer":"Voir";});
+$("loginForm").addEventListener("submit",async e=>{e.preventDefault();const b=$("loginButton");b.disabled=true;b.textContent="Connexion…";msg("loginMessage","");try{const {data,error}=await client.auth.signInWithPassword({email:$("email").value.trim().toLowerCase(),password:$("password").value});if(error)throw Error("Adresse e-mail ou mot de passe incorrect.");await enter(data.user);}catch(err){msg("loginMessage",err.message||"Connexion impossible.");}finally{b.disabled=false;b.textContent="Accéder au tableau de bord →";}});
+$("logoutButton").addEventListener("click",async()=>{await client.auth.signOut();showLogin();msg("loginMessage","Tu es déconnecté.","success");});$("refreshButton").addEventListener("click",load);$("checkHealthButton").addEventListener("click",load);
+document.querySelectorAll(".nav-tab").forEach(b=>b.addEventListener("click",()=>tab(b.dataset.tab)));document.querySelectorAll("[data-goto]").forEach(b=>b.addEventListener("click",()=>tab(b.dataset.goto)));
+$("memberSearch").addEventListener("input",renderMembers);$("roleFilter").addEventListener("change",renderMembers);$("clearNotifications").addEventListener("click",()=>{seen=true;render();});
+document.querySelectorAll("[data-export]").forEach(b=>b.addEventListener("click",()=>exportData(b.dataset.export)));$("exportButton").addEventListener("click",()=>exportData("all"));
+const {data}=await client.auth.getSession();if(data.session?.user){try{await enter(data.session.user);}catch(e){await client.auth.signOut();showLogin();msg("loginMessage",e.message||"Accès refusé.");}}
+}
+document.addEventListener("DOMContentLoaded",init);
 })();
