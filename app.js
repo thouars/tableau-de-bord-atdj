@@ -42,10 +42,22 @@
     $("sourceDescription").textContent = "Récupération sécurisée des indicateurs du site principal…";
     const { data, error } = await client.functions.invoke("dashboard-stats", { body: {} });
     if (error) {
-      $("sourceStatus").textContent = "À configurer";
+      let detail = "Le connecteur n’a pas répondu correctement.";
+      try {
+        const response = error.context;
+        if (response && typeof response.json === "function") {
+          const payload = await response.json();
+          if (payload?.message) detail = payload.message;
+        } else if (error.message) {
+          detail = error.message;
+        }
+      } catch (_) {
+        if (error.message) detail = error.message;
+      }
+      $("sourceStatus").textContent = "Erreur de connexion";
       $("sourceStatus").className = "status-pill";
-      $("sourceDescription").textContent = "La connexion sécurisée au site principal n’est pas encore configurée. L’accès privé fonctionne, mais les indicateurs ne sont pas encore chargés.";
-      setMessage("dashboardMessage", "Étape restante : configurer les secrets du connecteur côté Supabase.");
+      $("sourceDescription").textContent = detail;
+      setMessage("dashboardMessage", "Les accès au tableau de bord sont validés, mais les statistiques ne sont pas encore disponibles.");
       return;
     }
     if (!data?.ok) {
