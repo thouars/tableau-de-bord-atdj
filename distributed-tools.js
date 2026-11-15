@@ -14,6 +14,6 @@ for(const [engine,api] of engines)api.items.forEach((item,index)=>{if(map.tabs.i
 host.innerHTML=html||'<p class="muted">Aucun outil dans cette rubrique.</p>';const count=document.getElementById("count-"+key);if(count)count.textContent=n+" outils";
 }
 return true;}
-document.addEventListener("click",e=>{const b=e.target.closest(".distributed-tool-card");if(!b)return;const tab=b.closest(".distributed-tools-panel")?.querySelector(".distributed-result");const key=tab?.id;if(!key)return;const engine=b.dataset.engine==="100"?window.ATDJTools100:window.ATDJTools200;engine.setResultTarget(key);const title=tab.closest(".distributed-tools-panel").querySelector("h2");if(title)title.textContent="Résultat : "+b.querySelector("strong").textContent;engine.runIndex(Number(b.dataset.index));});
+document.addEventListener("click",e=>{const b=e.target.closest(".distributed-tool-card");if(!b)return;const tab=b.closest(".distributed-tools-panel")?.querySelector(".distributed-result");const key=tab?.id;if(!key)return;const engine=b.dataset.engine==="100"?window.ATDJTools100:window.ATDJTools200;engine.setResultTarget(key);engine.runIndex(Number(b.dataset.index));});
 document.addEventListener("DOMContentLoaded",()=>{if(!draw())window.addEventListener("load",draw);});
 })();
